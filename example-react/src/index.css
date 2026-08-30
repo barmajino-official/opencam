@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+
+body {
+  @apply bg-ink text-slate-200 antialiased;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+/* Shared building blocks, so the example files stay about OpenCam and not
+   about Tailwind class soup. */
+@layer components {
+  .card   { @apply rounded-xl border border-edge bg-panel p-4; }
+  .label  { @apply text-[11px] uppercase tracking-wider text-slate-500; }
+  .value  { @apply text-2xl font-semibold tabular-nums text-slate-100; }
+  .btn    { @apply rounded-lg px-3 py-2 text-sm font-medium transition
+                   disabled:cursor-not-allowed disabled:opacity-40; }
+  .btn-primary { @apply btn bg-sky-500 text-white hover:bg-sky-400; }
+  .btn-ghost   { @apply btn border border-edge text-slate-300 hover:bg-edge/60; }
+  .chip   { @apply rounded-full border border-edge px-2 py-0.5 text-xs text-slate-400; }
+}

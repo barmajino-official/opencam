@@ -1,0 +1,233 @@
+# ---------------------------------------------------------------------------
+# OpenCam — realtime WebRTC + computer-vision pipeline
+#
+#   docker compose up --build
+#   open http://localhost:5173
+#
+# NETWORKING
+# ----------
+# Both services run on the host network *on purpose*. aiortc gathers ICE
+# candidates from the interfaces it can see; inside a bridge network those are
+# unreachable 172.x addresses, so media would never flow without a TURN relay.
+# Host networking gives the browser directly reachable candidates and removes a
+# NAT hop from the media path — the lowest-latency option on Linux.
+#
+# On macOS / Windows (where host networking is not equivalent), switch to the
+# bridge block at the bottom of this file and run a TURN server such as coturn.
+# ---------------------------------------------------------------------------
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        # onnxruntime-gpu for CUDA; also switch the runtime base image.
+        ONNXRUNTIME_PACKAGE: ${ONNXRUNTIME_PACKAGE:-onnxruntime}
+    image: opencam-backend:1.0.0
+    container_name: opencam-backend
+    restart: unless-stopped
+    network_mode: host
+    init: true
+
+    volumes:
+      # Reference identities. Read-only: the pipeline never writes here.
+      - ./faces:/faces:ro
+      # Named volume keeps the baked models addressable for inspection/override.
+      - models:/models
+
+    # --- container hardening ---
+    # no-new-privileges blocks setuid escalation inside the container; dropping
+    # all capabilities is safe because the process only opens a socket and reads
+    # models. The rootfs is read-only with explicit tmpfs for the paths Python
+    # actually writes.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    ulimits:
+      nofile: { soft: 4096, hard: 8192 }
+
+    environment:
+      # Loopback by default: this API is unauthenticated unless you set
+      # OPENCAM_API_TOKEN, and it can reach your network via /api/ingest.
+      BACKEND_HOST: ${BACKEND_HOST:-127.0.0.1}
+      BACKEND_PORT: ${BACKEND_PORT:-8080}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+      MODEL_DIR: /models
+      FACES_DIR: /faces
+
+      # --- throughput / latency ---
+      MAX_WORKERS: ${MAX_WORKERS:-4}
+      INFERENCE_THREADS: ${INFERENCE_THREADS:-2}
+      INFERENCE_MAX_SIDE: ${INFERENCE_MAX_SIDE:-640}
+      MIN_INFERENCE_INTERVAL_MS: ${MIN_INFERENCE_INTERVAL_MS:-40}
+      ANNOTATION_TTL_MS: ${ANNOTATION_TTL_MS:-750}
+
+      # --- stages ---
+      DETECTOR_ENABLED: ${DETECTOR_ENABLED:-1}
+      DETECTOR_CONF: ${DETECTOR_CONF:-0.35}
+      DETECTOR_IOU: ${DETECTOR_IOU:-0.45}
+
+      FACE_ENABLED: ${FACE_ENABLED:-1}
+      FACE_MATCH_THRESHOLD: ${FACE_MATCH_THRESHOLD:-0.363}
+      FACE_MAX_FACES: ${FACE_MAX_FACES:-6}
+      FACE_RELOAD_INTERVAL_S: ${FACE_RELOAD_INTERVAL_S:-5}
+
+      EMOTION_ENABLED: ${EMOTION_ENABLED:-1}
+      EMOTION_MAX_FACES: ${EMOTION_MAX_FACES:-3}
+      EMOTION_THINKING_HEURISTIC: ${EMOTION_THINKING_HEURISTIC:-1}
+
+      OCR_ENABLED: ${OCR_ENABLED:-1}
+      OCR_EVERY_N: ${OCR_EVERY_N:-6}
+      OCR_MAX_REGIONS: ${OCR_MAX_REGIONS:-8}
+
+      # --- distance / people / ingest ---
+      DISTANCE_ENABLED: ${DISTANCE_ENABLED:-1}
+      CAMERA_HFOV_DEG: ${CAMERA_HFOV_DEG:-60}
+      FACE_IPD_M: ${FACE_IPD_M:-0.063}
+      FACE_WIDTH_M: ${FACE_WIDTH_M:-0.150}
+
+      PEOPLE_ENABLED: ${PEOPLE_ENABLED:-1}
+      PEOPLE_MAX_MISSES: ${PEOPLE_MAX_MISSES:-8}
+
+      INGEST_ENABLED: ${INGEST_ENABLED:-1}
+      # `file` and `device` read local resources and are deliberately absent.
+      INGEST_ALLOWED_SCHEMES: ${INGEST_ALLOWED_SCHEMES:-rtsp,rtsps,rtmp,rtmps,https}
+      # Leave 0 unless every camera is on a trusted LAN: enabling it turns
+      # /api/ingest into an internal-network scanner.
+      INGEST_ALLOW_PRIVATE: ${INGEST_ALLOW_PRIVATE:-0}
+      INGEST_TIMEOUT_S: ${INGEST_TIMEOUT_S:-15}
+
+      # --- security ---
+      # Set a token to require `Authorization: Bearer <token>` on every /api
+      # route and the metadata websocket. Empty = no authentication.
+      OPENCAM_API_TOKEN: ${OPENCAM_API_TOKEN:-}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174}
+
+      # --- resource caps ---
+      MAX_SESSIONS: ${MAX_SESSIONS:-16}
+      MAX_VIEWERS_PER_SESSION: ${MAX_VIEWERS_PER_SESSION:-8}
+      MAX_SOCKETS_PER_SESSION: ${MAX_SOCKETS_PER_SESSION:-16}
+
+      # --- rendering / webrtc ---
+      DRAW_LABELS: ${DRAW_LABELS:-1}
+      DRAW_HUD: ${DRAW_HUD:-1}
+      STUN_URL: ${STUN_URL:-stun:stun.l.google.com:19302}
+      SESSION_IDLE_TIMEOUT_S: ${SESSION_IDLE_TIMEOUT_S:-60}
+
+    # Inference is CPU-bound; cap it so the pipeline cannot starve the host.
+    deploy:
+      resources:
+        limits:
+          cpus: ${BACKEND_CPUS:-4.0}
+          memory: ${BACKEND_MEMORY:-4g}
+
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: opencam-frontend:1.0.0
+    container_name: opencam-frontend
+    restart: unless-stopped
+    network_mode: host
+    init: true
+    depends_on:
+      backend:
+        condition: service_healthy
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      # nginx drops to an unprivileged worker after binding; it needs this only
+      # to chown its own runtime files.
+      - CHOWN
+      - SETGID
+      - SETUID
+
+    volumes:
+      # The template is baked into the image too; mounting it lets a config
+      # change take effect without a rebuild (this machine's docker build has no
+      # registry access, so the frontend image cannot currently be rebuilt).
+      - ./frontend/nginx.conf:/etc/nginx/templates/default.conf.template:ro
+
+    environment:
+      FRONTEND_PORT: ${FRONTEND_PORT:-5173}
+      FRONTEND_BIND: ${FRONTEND_BIND:-127.0.0.1}
+      # The image bakes a filter listing only FRONTEND_PORT/BACKEND_UPSTREAM;
+      # extend it so FRONTEND_BIND is substituted too.
+      NGINX_ENVSUBST_FILTER: '^(FRONTEND_PORT|FRONTEND_BIND|BACKEND_UPSTREAM)$$'
+      # Host networking means the backend is simply on loopback.
+      BACKEND_UPSTREAM: ${BACKEND_UPSTREAM:-127.0.0.1:8080}
+
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+  # ---------------------------------------------------------------------
+  # SDK builder. Not part of the running stack -- it exists so the npm
+  # package can be built and packed without Node on the host:
+  #
+  #   docker compose run --rm sdk bun install
+  #   docker compose run --rm sdk bun run build
+  #   docker compose run --rm sdk bun pm pack
+  #
+  # `profiles` keeps it out of `docker compose up`.
+  # ---------------------------------------------------------------------
+  sdk:
+    image: oven/bun:1-alpine
+    profiles: ["tools"]
+    working_dir: /app
+    # Host networking plus the host resolver: on a machine whose DNS lives on
+    # systemd-resolved (127.0.0.53), a bridged container gets nameservers it has
+    # no route to and every bun install dies with a DNS failure.
+    network_mode: host
+    volumes:
+      - ./packages/opencam-client:/app
+      - /etc/resolv.conf:/etc/resolv.conf:ro
+    environment:
+      CI: "1"
+    command: ["bun", "run", "build"]
+
+volumes:
+  models:
+
+# ---------------------------------------------------------------------------
+# BRIDGE ALTERNATIVE (macOS / Windows / remote hosts)
+# ---------------------------------------------------------------------------
+# Replace `network_mode: host` on both services with the block below, publish
+# the ports, and point STUN_URL/TURN at a relay the browser can reach:
+#
+#   backend:
+#     networks: [opencam]
+#     ports: ["8080:8080"]
+#     environment:
+#       STUN_URL: "stun:<public-host>:3478"
+#   frontend:
+#     networks: [opencam]
+#     ports: ["5173:5173"]
+#     environment:
+#       BACKEND_UPSTREAM: "backend:8080"
+#   coturn:
+#     image: coturn/coturn:4.6
+#     network_mode: host
+#     command: >
+#       -n --listening-port=3478 --fingerprint --lt-cred-mech
+#       --realm=opencam --user=opencam:${TURN_PASSWORD}
+#       --external-ip=$$(detect-external-ip)
+#   networks:
+#     opencam:
+#       driver: bridge
+#
+# Then add the TURN server to ICE_SERVERS in frontend/src/hooks/useWebRTC.ts.
+# ---------------------------------------------------------------------------

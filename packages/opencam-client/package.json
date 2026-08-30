@@ -1,0 +1,41 @@
+{
+  "name": "@opencam/client",
+  "version": "1.0.0",
+  "description": "Realtime object detection, face recognition, distance, emotion and OCR for the browser, over WebRTC.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "files": ["dist", "README.md"],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "default": "./dist/react/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": { "optional": true }
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "react": "^18.3.1",
+    "typescript": "^5.7.2"
+  },
+  "keywords": [
+    "webrtc", "computer-vision", "object-detection", "face-recognition",
+    "ocr", "emotion", "distance", "react", "yolov8", "onnx"
+  ]
+}

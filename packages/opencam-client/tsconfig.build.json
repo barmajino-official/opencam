@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Emitted output resolves at runtime, not through a bundler, so every
+    // relative import in src/ carries an explicit .js extension.
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src"]
+}

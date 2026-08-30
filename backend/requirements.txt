@@ -1,0 +1,13 @@
+# --- web / async ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# --- webrtc ---
+aiortc==1.9.0
+av==12.3.0
+
+# --- vision ---
+# headless build: no X11/GL system libs required inside the container
+opencv-python-headless==4.10.0.84
+onnxruntime==1.19.2
+numpy==1.26.4
